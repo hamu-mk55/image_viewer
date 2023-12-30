@@ -16,6 +16,10 @@ def draw_cross(img, x, y, line_thick=2, line_color=(255, 0, 0)):
 
 
 def draw_rectangle(img, x0, x1, y0, y1, line_thick=2, line_color=(255, 0, 0)):
+    _img_h = img.shape[0]
+    line_thick = int(line_thick *_img_h / 500)
+
+    cv2.rectangle(img, (x0, y0), (x1, y1), color=0, thickness=line_thick + 2)
     cv2.rectangle(img, (x0, y0), (x1, y1), color=line_color, thickness=line_thick)
 
     return img

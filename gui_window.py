@@ -5,35 +5,47 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure
 
 
-class ParamWindow:
-    # TODO: 二値化->膨張収縮->輪郭描画を実施。
-    # TODO: 二値化および膨張収縮について、パラメータ変更が出来るようにする
+class Params1Ch:
+    def __init__(self):
+        self.mode = 'single'
+        self.val = Param()
 
-    def __init__(self, parent):
+
+class Param:
+    def __init__(self):
+        self.lower = None
+        self.upper = None
+        self.inverse = False
+
+    def set_params(self, lower, upper, inverse):
+        self.lower = lower
+        self.upper = upper
+        self.inverse = inverse
+
+
+class ParamWindow:
+    def __init__(self, parent, color_mode='1ch'):
         self.root = tkinter.Toplevel(parent)
         self.root.title('Parameters')
         self.root.attributes('-topmost', True)
-        self.root.geometry('300x300')
+        self.root.geometry('200x300')
         self.root.protocol('WM_DELETE_WINDOW', self.exit)
 
-        # フォントの設定
+        # define style
         self.style_font = ("Arial", 15)
         self.style_color = {'bg': '#ffffff', 'fg': '#000000'}
         self.style_color_red = {'bg': '#ff0000', 'fg': '#ffffff'}
         self.style_color_red = {'bg': '#0000ff', 'fg': '#ffffff'}
 
-        # フレーム関係
+        # frame
         self.frame = None
 
-        self.color_ch_list = ['blue', 'green', 'red', 'gray']
-        self.color_ch = self.color_ch_list[0]
-        self.msg_color = tkinter.StringVar()
-        self.combobox = None
+        # results
+        self.param = Params1Ch()
 
-        self.msg_scale = tkinter.IntVar()
-        self.scale = None
-
+        # start
         self.set_frame()
+        self.root.mainloop()
 
     def set_frame(self):
         # delete frames
@@ -45,31 +57,38 @@ class ParamWindow:
         self.frame = tkinter.Frame(self.root)
         self.frame.pack()
 
-        self.msg_color.set(self.color_ch)
-        self.combobox = ttk.Combobox(self.frame,
-                                     textvariable=self.msg_color,
-                                     value=self.color_ch_list,
-                                     state='readonly')
-        self.combobox.pack(pady=10)
-
-        self.scale = tkinter.Scale(self.frame,
-                                   label=self.color_ch,
-                                   orient=tkinter.HORIZONTAL,
-                                   variable=self.msg_scale,
-                                   from_=0,
-                                   to=255)
-        self.scale.pack()
+        self.set_entrys_1ch()
 
         pass
+
+    def set_entrys_1ch(self,
+                       label_width=10,
+                       entry_width=5, entry_justify='right'):
+
+        def _set_param(mode='lower'):
+            ret = entry.get()
+            entry.delete(0, tkinter.END)
+            entry.insert(tkinter.END, 'ss')
+
+        label = tkinter.Label(self.frame, text='value')
+        label.grid(row=0, column=0)
+
+        label = tkinter.Label(self.frame, text='lower', width=label_width)
+        label.grid(row=1, column=0, padx=10)
+
+        entry_lower = tkinter.Entry(self.frame,
+                              width=entry_width,
+                              justify=entry_justify)
+        entry_lower.grid(row=1, column=1)
+
+        label = tkinter.Label(self.frame, text='lower', width=label_width)
+        label.grid(row=2, column=0, padx=10)
+
+        entry_upper = tkinter.Entry(self.frame, width=entry_width,justify=entry_justify)
+        entry_upper.grid(row=2, column=1)
 
     def __del__(self):
         self.exit()
-
-    def start(self):
-        self.root.mainloop()
-
-    def command(self):
-        pass
 
     def exit(self):
         self.root.destroy()
@@ -196,7 +215,7 @@ class HistogramViewer(GraphViewer):
 
         colors = ('b', 'g', 'r')
         linestyles = ('-', ':', '-')
-        if len(hist_list)==1:
+        if len(hist_list) == 1:
             labels = ('value',)
         for _cnt, _hist in enumerate(hist_list):
             self.ax.plot(_hist, color=colors[_cnt], label=labels[_cnt], ls=linestyles[_cnt])

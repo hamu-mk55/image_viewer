@@ -9,9 +9,9 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 from PIL import Image, ImageTk
 
 from gui_window import HistogramViewer, ProfileViewer, GraphViewer, ParamWindow
-from gui_params import GuiParams
 from opencv_func import ImageFunc
-
+from gui_params import GuiParams
+from image_proc import img_proc
 
 def img_cv2tk(img_cv):
     """
@@ -33,11 +33,9 @@ def img_cv2tk(img_cv):
 
 class ImageViewer:
     """
-    TODO: 寸法測定機能, 輝度分布(ヒストグラムorHSVの円)表示機能
     TODO: 面積測定機能(モノクロ限定？)
     TODO: 二値化機能
     TODO: 二値化条件の自動抽出??クラスタリング、ヒストグラム
-    TODO: 画像保存
     """
 
     def __init__(self):
@@ -55,9 +53,9 @@ class ImageViewer:
         self.style_color_blue = {'bg': '#0000ff', 'fg': '#ffffff'}
 
         # parameters: images
-        self.img_paths = []
-        self.imgs_cv = []
-        self.imgs_pil = []
+        self.img_paths: list[str] = []
+        self.imgs_cv: list[ImageCvData] = []
+        self.imgs_pil: list[ImageTk.PhotoImage] = []
         self.img_cnt = 0
 
         self.func_proc = None
@@ -82,6 +80,9 @@ class ImageViewer:
         # parameters: etc
         self.cwd = os.getcwd()
         self.gui_timer = time.time()
+        self.gui_response_sec = 0.1
+
+        self.click_func = 'show_info'
 
         # parameters: frame
         self.root.update_idletasks()
@@ -99,12 +100,14 @@ class ImageViewer:
         self.msg_size = tkinter.StringVar()
         self.msg_shortcut_func = tkinter.StringVar()
 
-        self.shortcut_func_list = ['Info', 'Profile(Hor)', 'Profile(Ver)', 'Cross', 'Histogram', 'Histogram(HSV)']
+        self.shortcut_func_list = ['None', 'Profile(Hor)', 'Profile(Ver)', 'Cross', 'Histogram', 'Histogram(HSV)']
         self.shortcut_func = self.shortcut_func_list[0]
 
         # start
         self.set_frames()
         self.set_shortcut()
+
+        self.open_param_window()
 
         self.root.mainloop()
 
@@ -245,16 +248,17 @@ class ImageViewer:
         # main
         for _row in range(self.img_num_row):
             for _col in range(self.img_num_col):
-                # OpenCV->Image Process->Fit Window
+                # OpenCV->Image Process
                 if update_cv:
-                    _img, _ratio = self.load_img(self.img_cnt + _cnt)
-                    self.imgs_cv.append(ImageCvClass(_img, _ratio))
-                else:
-                    _img = self.imgs_cv[_cnt].img
+                    _img_org = self.load_img_with_preprocess(self.img_cnt + _cnt)
+                    self.imgs_cv.append(ImageCvData(_img_org, self.img_h, self.img_w))
+
+                # Fit Window
+                img = self.imgs_cv[_cnt].img_fit
 
                 # Draw Shape->PIL
-                _img = self.img_cv2viewer(_img)
-                self.imgs_pil.append(_img)
+                img = self.img_cv2viewer(img)
+                self.imgs_pil.append(img)
 
                 # Set frame->image
                 _frame = tkinter.Frame(self.frame2,
@@ -284,7 +288,7 @@ class ImageViewer:
                     _label.bind("<Button1-Motion>", self.set_zoom_drag)
                     _label.bind("<ButtonRelease-1>", self.set_zoom_release)
 
-                _label.bind("<Button-3>", self.show_info)
+                _label.bind("<Button-3>", self.click_function)
                 _label.bind("<Motion>", self.show_info_mouse)
 
                 _cnt += 1
@@ -306,12 +310,14 @@ class ImageViewer:
         col_menu.add_command(label='x1', command=lambda: _set_images_num(col=1))
         col_menu.add_command(label='x2', command=lambda: _set_images_num(col=2))
         col_menu.add_command(label='x3', command=lambda: _set_images_num(col=3))
+        col_menu.add_command(label='x4', command=lambda: _set_images_num(col=4))
         menubar.add_cascade(label='Cols', menu=col_menu)
 
         row_menu = tkinter.Menu(menubar)
         row_menu.add_command(label='x1', command=lambda: _set_images_num(row=1))
         row_menu.add_command(label='x2', command=lambda: _set_images_num(row=2))
         row_menu.add_command(label='x3', command=lambda: _set_images_num(row=3))
+        row_menu.add_command(label='x4', command=lambda: _set_images_num(row=4))
         menubar.add_cascade(label='Rows', menu=row_menu)
 
         def _set_preproc_color(mode='color'):
@@ -333,6 +339,15 @@ class ImageViewer:
         zoom_menu.add_command(label='set zoom', command=self.set_zoom)
         zoom_menu.add_command(label='unset zoom', command=self.unset_zoom)
         menubar.add_cascade(label='Zoom', menu=zoom_menu)
+
+        def _set_click_function(mode='show_info'):
+            self.click_func = mode
+            self.set_frame2()
+
+        func_menu = tkinter.Menu(menubar)
+        func_menu.add_command(label='show info', command=lambda: _set_click_function('show_info'))
+        func_menu.add_command(label='save image', command=lambda: _set_click_function('save_image'))
+        menubar.add_cascade(label='ClickFunc', menu=func_menu)
 
         self.root.config(menu=menubar)
 
@@ -377,178 +392,162 @@ class ImageViewer:
 
         self.set_frame2()
 
-    def _get_image_info(self, event):
-        _cnt = int(event.widget['text'])
-        _full_path = self.img_paths[_cnt]
-        _dir = os.path.basename(os.path.dirname(_full_path))
-        _file = os.path.basename(_full_path)
+    def _get_image_info(self, event, use_org_img=False):
+        info = ImageInfo(use_org_img)
 
-        _img = self.imgs_cv[_cnt - self.img_cnt].img
-        _ratio = self.imgs_cv[_cnt - self.img_cnt].resize_ratio
-        _x0 = min(int(event.x), _img.shape[1] - 5)
-        _y0 = min(int(event.y), _img.shape[0] - 5)
-        _val = _img[_y0, _x0]
-        try:
-            _img_hsv = cv2.cvtColor(_img, cv2.COLOR_BGR2HSV)
-            _hsv = _img_hsv[_y0, _x0]
-        except Exception as err:
-            _hsv = ''
+        info.cnt = int(event.widget['text'])
+        info.full_path = self.img_paths[info.cnt]
+        info.dir = os.path.basename(os.path.dirname(info.full_path))
+        info.file = os.path.basename(info.full_path)
+        info.gui_x = int(event.x)
+        info.gui_y = int(event.y)
 
-        info_dict = {"cnt": _cnt,
-                     "full_path": _full_path,
-                     "dir": _dir,
-                     "file": _file,
-                     "ratio": _ratio,
-                     "x": _x0,
-                     "y": _y0,
-                     "val": _val,
-                     "hsv": _hsv,
-                     "img_h": int(_img.shape[0] / _ratio),
-                     "img_w": int(_img.shape[1] / _ratio)}
-        return info_dict
+        if use_org_img:
+            info.img = self.imgs_cv[info.cnt - self.img_cnt].img_org
+        else:
+            info.img = self.imgs_cv[info.cnt - self.img_cnt].img_fit
+
+        info.fit_ratio = self.imgs_cv[info.cnt - self.img_cnt].fit_ratio
+
+        info.calc_params()
+
+        return info
+
+    def click_function(self, event):
+        if self.click_func=='save_image':
+            self.save_image(event)
+        else:
+            self.show_info(event)
+
+    def save_image(self, event):
+        info: ImageInfo = self._get_image_info(event, use_org_img=True)
+
+        img_path = tkinter.filedialog.asksaveasfilename(initialdir=self.cwd,
+                                                        initialfile=f'{info.file}')
+        if img_path is None: return
+        if len(img_path)<1: return
+
+        cv2.imwrite(img_path, info.img)
 
     def show_info(self, event):
-        info_dict = self._get_image_info(event)
+        info: ImageInfo = self._get_image_info(event)
 
         tkinter.messagebox.showinfo('info',
-                                    f'path: {info_dict["full_path"]}\n'
-                                    f'dir: {info_dict["dir"]}\n'
-                                    f'file: {info_dict["file"]}\n'
-                                    f'img_h: {info_dict["img_h"]}\n'
-                                    f'img_w: {info_dict["img_w"]}\n')
+                                    f'path: {info.full_path}\n'
+                                    f'dir: {info.dir}\n'
+                                    f'file: {info.file}\n'
+                                    f'img_h: {info.img_h_org}\n'
+                                    f'img_w: {info.img_w_org}\n')
 
     def show_info_mouse(self, event):
-        info_dict = self._get_image_info(event)
+        info: ImageInfo = self._get_image_info(event)
 
-        x0 = info_dict["x"]
-        y0 = info_dict["y"]
-        ratio = info_dict["ratio"]
-        self.msg_path.set(info_dict["file"])
-        self.msg_pos.set(f'X: {int(x0 / ratio)} Y: {int(y0 / ratio)}')
-        self.msg_img.set(f'BGR: {info_dict["val"]}')
-        self.msg_hsv.set(f'HSV: {info_dict["hsv"]}')
+        self.msg_path.set(info.file)
+        self.msg_pos.set(f'X: {info.x_org} Y: {info.y_org}')
+        self.msg_img.set(f'BGR: {info.val}')
+        self.msg_hsv.set(f'HSV: {info.hsv}')
 
         _type = self.param_gui.gui_type
         if _type is not None and _type.lower() == 'cross':
             _cross_x0 = self.param_gui.x0
             _cross_y0 = self.param_gui.y0
-            _w = int(abs(x0 - _cross_x0) / ratio * self.param_gui.pix2um)
-            _h = int(abs(y0 - _cross_y0) / ratio * self.param_gui.pix2um)
+            _w = int(abs(info.x - _cross_x0) / info.fit_ratio * self.param_gui.pix2um)
+            _h = int(abs(info.y - _cross_y0) / info.fit_ratio * self.param_gui.pix2um)
             self.msg_size.set(f'W: {_w}, H: {_h}')
         else:
             self.msg_size.set('')
 
     def show_profile(self, event):
-        _cnt = int(event.widget['text'])
-        _img = self.imgs_cv[_cnt - self.img_cnt].img
-        _ratio = self.imgs_cv[_cnt - self.img_cnt].resize_ratio
-        _x0 = int(event.x)
-        _y0 = int(event.y)
+        info: ImageInfo = self._get_image_info(event, use_org_img=True)
 
         if self.shortcut_func == 'Profile(Ver)':
-            _pos, _profile = ImageFunc.check_profile(_img, x=_x0, y=_y0, direction='ver')
+            _direction = 'ver'
         else:
-            _pos, _profile = ImageFunc.check_profile(_img, x=_x0, y=_y0, direction='hor')
+            _direction = 'hor'
 
-        _pos = _pos / _ratio
-
+        _pos, _profile = ImageFunc.check_profile(info.img, x=info.x, y=info.y, direction=_direction)
         _viewer = ProfileViewer(self.root, _pos, _profile)
-        # _viewer.show(_pos, _profile)
 
     def show_histogram_press(self, event):
-        _cnt = int(event.widget['text'])
-        _img = self.imgs_cv[_cnt - self.img_cnt].img
-        _ratio = self.imgs_cv[_cnt - self.img_cnt].resize_ratio
-        _x0 = int(event.x)
-        _y0 = int(event.y)
+        info: ImageInfo = self._get_image_info(event, use_org_img=True)
 
         self.param_gui.reset()
         self.param_gui.set_type('Rectangle')
-        self.param_gui.set_pos0(_x0, _y0)
+        self.param_gui.set_pos0(info.x_fit, info.y_fit)
         self.gui_timer = time.time()
 
     def show_histogram_drag(self, event):
-        if time.time() - self.gui_timer < 0.1:
-            # 更新間隔＞0.1sec
+        if time.time() - self.gui_timer < self.gui_response_sec:
             return
         else:
             self.gui_timer = time.time()
 
-        _cnt = int(event.widget['text'])
-        _img = self.imgs_cv[_cnt - self.img_cnt].img
-        _ratio = self.imgs_cv[_cnt - self.img_cnt].resize_ratio
-        _x1 = int(event.x)
-        _y1 = int(event.y)
+        info: ImageInfo = self._get_image_info(event, use_org_img=True)
 
-        self.param_gui.set_pos1(_x1, _y1)
+        self.param_gui.set_pos1(info.x_fit, info.y_fit)
         self.set_frame2(update_cv=False)
 
     def show_histogram_release(self, event):
-        _cnt = int(event.widget['text'])
-        _img = self.imgs_cv[_cnt - self.img_cnt].img
-        _ratio = self.imgs_cv[_cnt - self.img_cnt].resize_ratio
-        _x1 = int(event.x)
-        _y1 = int(event.y)
+        info: ImageInfo = self._get_image_info(event, use_org_img=True)
 
-        self.param_gui.set_pos1(_x1, _y1)
+        self.param_gui.set_pos1(info.x_fit, info.y_fit)
 
         if self.shortcut_func == 'Histogram(HSV)':
-            _img = cv2.cvtColor(_img, cv2.COLOR_BGR2HSV)
+            _img = cv2.cvtColor(info.img, cv2.COLOR_BGR2HSV)
             labels = ('Hue', 'Saturation', 'Bright')
         else:
+            _img = info.img
             labels = ('Blue', 'Green', 'Red')
 
+        x0 = int(self.param_gui.x0 / info.fit_ratio)
+        x1 = int(self.param_gui.x1 / info.fit_ratio)
+        y0 = int(self.param_gui.y0 / info.fit_ratio)
+        y1 = int(self.param_gui.y1 / info.fit_ratio)
         _hist_list = ImageFunc.check_histgram(_img,
-                                              x0=self.param_gui.x0, x1=self.param_gui.x1,
-                                              y0=self.param_gui.y0, y1=self.param_gui.y1)
+                                              x0=x0, x1=x1,
+                                              y0=y0, y1=y1)
         _viewer = HistogramViewer(self.root, _hist_list, labels=labels)
 
         self.set_frame2(update_cv=False)
 
     def set_cross(self, event):
-        _cnt = int(event.widget['text'])
-        _img = self.imgs_cv[_cnt - self.img_cnt].img
-        _ratio = self.imgs_cv[_cnt - self.img_cnt].resize_ratio
-        _x0 = int(event.x)
-        _y0 = int(event.y)
+        info: ImageInfo = self._get_image_info(event)
 
         self.param_gui.set_type('Cross')
-        self.param_gui.set_pos0(x0=_x0, y0=_y0)
+        self.param_gui.set_pos0(x0=info.x, y0=info.y)
 
         self.set_frame2(update_cv=False)
 
     def set_zoom_press(self, event):
         if self.preproc_zoom: return
 
-        _x0 = int(event.x)
-        _y0 = int(event.y)
-        self.preproc_pos0 = (_x0/self.img_w, _y0/self.img_h)
+        info: ImageInfo = self._get_image_info(event)
+
+        self.preproc_pos0 = (info.x_org, info.y_org)
         self.gui_timer = time.time()
 
     def set_zoom_drag(self, event):
         if self.preproc_zoom: return
 
-        if time.time() - self.gui_timer < 0.1:
-            # 更新間隔＞0.1sec
+        if time.time() - self.gui_timer < self.gui_response_sec:
             return
         else:
             self.gui_timer = time.time()
 
-        _x1 = int(event.x)
-        _y1 = int(event.y)
-        self.preproc_pos1 = (_x1 / self.img_w, _y1 / self.img_h)
+        info: ImageInfo = self._get_image_info(event)
+        self.preproc_pos1 = (info.x_org, info.y_org)
+
         self.preproc_zoom_draw = True
         self.set_frame2()
 
     def set_zoom_release(self, event):
         if self.preproc_zoom: return
 
-        _x1 = int(event.x)
-        _y1 = int(event.y)
+        info: ImageInfo = self._get_image_info(event)
 
-        _x0 = self.preproc_pos0[0] * self.img_w
-        _y0 = self.preproc_pos0[1] * self.img_h
-        if abs(_x1 - _x0) < 5 or abs(_y1 - _y0) < 5:
+        _x0 = self.preproc_pos0[0] * info.fit_ratio
+        _y0 = self.preproc_pos0[1] * info.fit_ratio
+        if abs(info.x - _x0) < 5 or abs(info.y - _y0) < 5:
             self.preproc_pos0 = None
             self.preproc_pos1 = None
             self.preproc_zoom = False
@@ -556,7 +555,7 @@ class ImageViewer:
             self.set_frame2()
             return
 
-        self.preproc_pos1 = (_x1 / self.img_w, _y1 / self.img_h)
+        self.preproc_pos1 = (info.x_org, info.y_org)
         self.preproc_zoom = True
         self.preproc_zoom_draw = False
         self.set_frame2()
@@ -571,12 +570,7 @@ class ImageViewer:
         self.preproc_zoom = False
         self.set_frame2()
 
-    def load_img(self, img_cnt, img_h=None, img_w=None):
-        if img_h is None:
-            img_h = self.img_h
-        if img_w is None:
-            img_w = self.img_w
-
+    def load_img_with_preprocess(self, img_cnt):
         if 0 <= img_cnt < len(self.img_paths):
             _img_path = self.img_paths[img_cnt]
 
@@ -591,17 +585,9 @@ class ImageViewer:
             if self.func_proc is not None:
                 _img = self.func_proc(_img)
 
-            # fit to window----------------
-            _h = _img.shape[0]
-            _w = _img.shape[1]
-            _h_ratio = img_h / _h
-            _w_ratio = img_w / _w
-            _ratio = min(_h_ratio, _w_ratio)
-
-            _img = cv2.resize(_img, (int(_w * _ratio), int(_h * _ratio)))
-            return _img, _ratio
+            return _img
         else:
-            return None, None
+            return None
 
     def img_preproc(self, img_cv):
         if img_cv is None: return None
@@ -629,14 +615,10 @@ class ImageViewer:
 
         img_out = img.copy()
         if self.preproc_pos1 is not None:
-            x0_ratio = self.preproc_pos0[0] *(1/0.95)
-            y0_ratio = self.preproc_pos0[1] *(1/0.95)
-            x1_ratio = self.preproc_pos1[0] *(1/0.95)
-            y1_ratio = self.preproc_pos1[1] *(1/0.95)
-            x0 = int(x0_ratio * img.shape[1])
-            x1 = int(x1_ratio * img.shape[1])
-            y0 = int(y0_ratio * img.shape[0])
-            y1 = int(y1_ratio * img.shape[0])
+            x0 = self.preproc_pos0[0]
+            y0 = self.preproc_pos0[1]
+            x1 = self.preproc_pos1[0]
+            y1 = self.preproc_pos1[1]
 
             if self.preproc_zoom_draw:
                 img_out = draw_rectangle(img_out, x0, x1, y0, y1)
@@ -692,21 +674,17 @@ class ImageViewer:
         self.start()
 
     def set_img_process(self):
-        self.open_param_window()
+        try:
+            del sys.modules['image_proc']
+        except Exception as err:
+            print(err)
 
-        pass
-        # try:
-        #     del sys.modules['opencv_func']
-        # except Exception as ee:
-        #     print(ee)
-        #
-        # from gui_func import HistogramViewer, ProfileViewer, GraphViewer, GuiParams
-        # from opencv_func import ImageFunc
-        # self.func_img_process = None
-        #
-        # self.set_frame2()
+        from image_proc import img_proc
+        self.func_proc = img_proc
 
-        # self.root.after(100, self.img_preproc)
+        self.set_frame2()
+
+        self.root.after(100, self.img_preproc)
 
     def reset_img_process(self):
         self.func_proc = None
@@ -714,7 +692,7 @@ class ImageViewer:
 
     def update_params(self):
         try:
-            del sys.modules['gui_func']
+            del sys.modules['gui_params']
         except Exception as ee:
             print(ee)
 
@@ -741,12 +719,12 @@ class ImageViewer:
 
     def open_param_window(self):
         def _print(event):
-            print(app.msg_color.get())
-            print(app.msg_scale.get())
+            pass
+            # print(app.msg_color.get())
+            # print(app.msg_scale.get())
 
         app = ParamWindow(self.root)
-        app.combobox.bind('<<ComboboxSelected>>', _print)
-
+        # app.combobox.bind('<<ComboboxSelected>>', _print)
 
     def exit(self):
         self.root.destroy()
@@ -756,17 +734,106 @@ class ImageViewer:
         if _ret: self.exit()
 
 
-class ImageCvClass:
-    """
-    画像情報を扱うクラス（画像データおよび縮尺）
-    """
+class ImageCvData:
+    def __init__(self, img_cv, img_win_h, img_win_w):
+        self.img_org = img_cv
+        self.img_fit = None
+        self.fit_ratio = None
 
-    def __init__(self, img_cv, ratio):
-        self.img = img_cv
-        self.resize_ratio = ratio
+        self._img_win_h = img_win_h
+        self._img_win_w = img_win_w
+
+        self._fit_window()
+
+    def _fit_window(self):
+        if self.img_org is None: return
+
+        try:
+            img_h = self.img_org.shape[0]
+            img_w = self.img_org.shape[1]
+
+            _h_ratio = self._img_win_h / img_h
+            _w_ratio = self._img_win_w / img_w
+            _ratio = min(_h_ratio, _w_ratio)
+
+            self.img_fit = cv2.resize(self.img_org,
+                                  (int(img_w * _ratio), int(img_h * _ratio)))
+            self.fit_ratio = _ratio
+        except:
+            self.img_fit = None
+            self.fit_ratio = None
+
+
+class ImageInfo:
+    def __init__(self, use_org_img=False):
+        self.use_org_img = use_org_img
+
+        # params: need to be defined
+        self.cnt = None
+        self.full_path = None
+        self.dir = None
+        self.file = None
+
+        self.img = None
+        self.fit_ratio = None
+        self.gui_x = None
+        self.gui_y = None
+
+        # params: calculate
+        self.x = None
+        self.y = None
+        self.val = None
+        self.hsv = None
+        self.img_h = None
+        self.img_w = None
+
+        self.img_h_org = None
+        self.img_w_org = None
+        self.x_org = None
+        self.y_org = None
+        self.x_fit = None
+        self.y_fit = None
+
+    def calc_params(self):
+        if self.img is None: return
+
+        # img shape
+        self.img_h = self.img.shape[0]
+        self.img_w = self.img.shape[1]
+        if not self.use_org_img:
+            self.img_h_org = int(self.img_h / self.fit_ratio)
+            self.img_w_org = int(self.img_w / self.fit_ratio)
+
+        # x/y position
+        if self.use_org_img:
+            _x = int(self.gui_x / self.fit_ratio)
+            _y = int(self.gui_y / self.fit_ratio)
+            self.x_fit = int(_x * self.fit_ratio)
+            self.y_fit = int(_y * self.fit_ratio)
+        else:
+            _x = self.gui_x
+            _y = self.gui_y
+            self.x_org = int(_x / self.fit_ratio)
+            self.y_org = int(_y / self.fit_ratio)
+
+        self.x = min(_x, self.img_w - 5)
+        self.y = min(_y, self.img_h - 5)
+
+        # image value
+        self.val = self.img[self.y, self.x]
+
+        try:
+            _img_hsv = cv2.cvtColor(self.img, cv2.COLOR_BGR2HSV)
+            self.hsv = _img_hsv[self.y, self.x]
+        except:
+            self.hsv = ''
 
 
 def draw_rectangle(img, x0, x1, y0, y1, line_thick=2, line_color=(255, 0, 0)):
+    _img_h = img.shape[0]
+    line_thick = int(line_thick * _img_h / 500)
+
+    cv2.rectangle(img, (x0, y0), (x1, y1), color=0, thickness=line_thick + 2)
     cv2.rectangle(img, (x0, y0), (x1, y1), color=line_color, thickness=line_thick)
     return img
 
