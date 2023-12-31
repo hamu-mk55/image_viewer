@@ -223,7 +223,7 @@ class ImageFunc:
         :return:
         """
         if type != 'hsv':
-            _img = cls.trans(img_bgr)
+            _img = cls.convert_color(img_bgr, type=type)
         else:
             raise ValueError('illegal type')
 

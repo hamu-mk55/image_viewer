@@ -8,7 +8,8 @@ import tkinter
 from tkinter import ttk, messagebox, simpledialog, filedialog
 from PIL import Image, ImageTk
 
-from gui_window import HistogramViewer, ProfileViewer, GraphViewer, ParamWindow
+from gui_window import HistogramViewer, ProfileViewer, GraphViewer
+from gui_window import ParamWindowForSingleChannel
 from opencv_func import ImageFunc
 from gui_params import GuiParams
 from image_proc import img_proc
@@ -34,7 +35,7 @@ def img_cv2tk(img_cv):
 class ImageViewer:
     """
     TODO: 面積測定機能(モノクロ限定？)
-    TODO: 二値化機能
+    TODO: 二値化機能(BGR)
     TODO: 二値化条件の自動抽出??クラスタリング、ヒストグラム
     """
 
@@ -58,13 +59,17 @@ class ImageViewer:
         self.imgs_pil: list[ImageTk.PhotoImage] = []
         self.img_cnt = 0
 
-        self.func_proc = None
+        # image preprocess
+        self.preproc1_color = 'color'
+        self.preproc2_thres_flg = False
+        self.preproc2_thres = {}
+        self.preproc3_zoom = False
+        self.preproc3_zoom_draw = False
+        self.preproc3_pos0 = None
+        self.preproc3_pos1 = None
 
-        self.preproc_zoom = False
-        self.preproc_zoom_draw = False
-        self.preproc_pos0 = None
-        self.preproc_pos1 = None
-        self.preproc_color = 'color'
+        # image process
+        self.func_proc = None
 
         # parameters: GUI-Params
         self.param_gui = GuiParams()
@@ -106,8 +111,6 @@ class ImageViewer:
         # start
         self.set_frames()
         self.set_shortcut()
-
-        self.open_param_window()
 
         self.root.mainloop()
 
@@ -321,7 +324,7 @@ class ImageViewer:
         menubar.add_cascade(label='Rows', menu=row_menu)
 
         def _set_preproc_color(mode='color'):
-            self.preproc_color = mode
+            self.preproc1_color = mode
             self.set_frame2()
 
         color_menu = tkinter.Menu(menubar)
@@ -334,6 +337,10 @@ class ImageViewer:
         color_menu.add_command(label='saturation', command=lambda: _set_preproc_color('s'))
         color_menu.add_command(label='value', command=lambda: _set_preproc_color('v'))
         menubar.add_cascade(label='Color', menu=color_menu)
+
+        thres_menu = tkinter.Menu(menubar)
+        thres_menu.add_command(label='thres_1ch', command=self.open_param_window)
+        menubar.add_cascade(label='Threshold', menu=thres_menu)
 
         zoom_menu = tkinter.Menu(menubar)
         zoom_menu.add_command(label='set zoom', command=self.set_zoom)
@@ -367,6 +374,9 @@ class ImageViewer:
         self.root.bind("<Up>", _return)
 
     def start(self):
+        """
+        画像表示を開始
+        """
         if len(self.img_paths) == 0:
             return 0
 
@@ -374,6 +384,9 @@ class ImageViewer:
         self.set_frame2()
 
     def next_img(self):
+        """
+        次の画像を表示
+        """
         _img_num = self.img_num_row * self.img_num_col
 
         if self.img_cnt + _img_num < len(self.img_paths):
@@ -384,6 +397,9 @@ class ImageViewer:
             pass
 
     def return_img(self):
+        """
+        前の画像を表示
+        """
         self.img_cnt -= self.img_num_row * self.img_num_col
 
         if self.img_cnt < 0:
@@ -393,6 +409,9 @@ class ImageViewer:
         self.set_frame2()
 
     def _get_image_info(self, event, use_org_img=False):
+        """
+        選択した画像の情報を取得。元画像を使用するか、GUIにフィットした画像を使用するか選択
+        """
         info = ImageInfo(use_org_img)
 
         info.cnt = int(event.widget['text'])
@@ -414,12 +433,18 @@ class ImageViewer:
         return info
 
     def click_function(self, event):
+        """
+        右クリックに登録するショートカットを選択
+        """
         if self.click_func=='save_image':
             self.save_image(event)
         else:
             self.show_info(event)
 
     def save_image(self, event):
+        """
+        選択した画像を保存
+        """
         info: ImageInfo = self._get_image_info(event, use_org_img=True)
 
         img_path = tkinter.filedialog.asksaveasfilename(initialdir=self.cwd,
@@ -430,6 +455,9 @@ class ImageViewer:
         cv2.imwrite(img_path, info.img)
 
     def show_info(self, event):
+        """
+        選択した画像の情報を表示
+        """
         info: ImageInfo = self._get_image_info(event)
 
         tkinter.messagebox.showinfo('info',
@@ -440,6 +468,9 @@ class ImageViewer:
                                     f'img_w: {info.img_w_org}\n')
 
     def show_info_mouse(self, event):
+        """
+        マウスポインタがある画像の情報をGUIに表示
+        """
         info: ImageInfo = self._get_image_info(event)
 
         self.msg_path.set(info.file)
@@ -519,15 +550,15 @@ class ImageViewer:
         self.set_frame2(update_cv=False)
 
     def set_zoom_press(self, event):
-        if self.preproc_zoom: return
+        if self.preproc3_zoom: return
 
         info: ImageInfo = self._get_image_info(event)
 
-        self.preproc_pos0 = (info.x_org, info.y_org)
+        self.preproc3_pos0 = (info.x_org, info.y_org)
         self.gui_timer = time.time()
 
     def set_zoom_drag(self, event):
-        if self.preproc_zoom: return
+        if self.preproc3_zoom: return
 
         if time.time() - self.gui_timer < self.gui_response_sec:
             return
@@ -535,39 +566,39 @@ class ImageViewer:
             self.gui_timer = time.time()
 
         info: ImageInfo = self._get_image_info(event)
-        self.preproc_pos1 = (info.x_org, info.y_org)
+        self.preproc3_pos1 = (info.x_org, info.y_org)
 
-        self.preproc_zoom_draw = True
+        self.preproc3_zoom_draw = True
         self.set_frame2()
 
     def set_zoom_release(self, event):
-        if self.preproc_zoom: return
+        if self.preproc3_zoom: return
 
         info: ImageInfo = self._get_image_info(event)
 
-        _x0 = self.preproc_pos0[0] * info.fit_ratio
-        _y0 = self.preproc_pos0[1] * info.fit_ratio
+        _x0 = self.preproc3_pos0[0] * info.fit_ratio
+        _y0 = self.preproc3_pos0[1] * info.fit_ratio
         if abs(info.x - _x0) < 5 or abs(info.y - _y0) < 5:
-            self.preproc_pos0 = None
-            self.preproc_pos1 = None
-            self.preproc_zoom = False
-            self.preproc_zoom_draw = False
+            self.preproc3_pos0 = None
+            self.preproc3_pos1 = None
+            self.preproc3_zoom = False
+            self.preproc3_zoom_draw = False
             self.set_frame2()
             return
 
-        self.preproc_pos1 = (info.x_org, info.y_org)
-        self.preproc_zoom = True
-        self.preproc_zoom_draw = False
+        self.preproc3_pos1 = (info.x_org, info.y_org)
+        self.preproc3_zoom = True
+        self.preproc3_zoom_draw = False
         self.set_frame2()
 
     def set_zoom(self):
-        if self.preproc_pos0 is None: return
-        if self.preproc_pos1 is None: return
-        self.preproc_zoom = True
+        if self.preproc3_pos0 is None: return
+        if self.preproc3_pos1 is None: return
+        self.preproc3_zoom = True
         self.set_frame2()
 
     def unset_zoom(self):
-        self.preproc_zoom = False
+        self.preproc3_zoom = False
         self.set_frame2()
 
     def load_img_with_preprocess(self, img_cnt):
@@ -595,34 +626,41 @@ class ImageViewer:
         img = img_cv.copy()
 
         if img.ndim == 3:
-            if self.preproc_color == 'gray':
+            if self.preproc1_color == 'gray':
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            elif self.preproc_color == 'blue':
+            elif self.preproc1_color == 'blue':
                 img = img[:, :, 0]
-            elif self.preproc_color == 'green':
+            elif self.preproc1_color == 'green':
                 img = img[:, :, 1]
-            elif self.preproc_color == 'red':
+            elif self.preproc1_color == 'red':
                 img = img[:, :, 2]
-            elif self.preproc_color == 'h':
+            elif self.preproc1_color == 'h':
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
                 img = img[:, :, 0]
-            elif self.preproc_color == 's':
+            elif self.preproc1_color == 's':
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
                 img = img[:, :, 1]
-            elif self.preproc_color == 'v':
+            elif self.preproc1_color == 'v':
                 img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
                 img = img[:, :, 2]
+        
+        img = img.copy()
+        if self.preproc2_thres_flg and img.ndim!=3:
+            if len(self.preproc2_thres)>0:
+                _low = self.preproc2_thres['value_lower']
+                _high = self.preproc2_thres['value_upper']
+                img = ImageFunc.threshold_gray2(img, thres_min=_low, thres_max=_high)
 
         img_out = img.copy()
-        if self.preproc_pos1 is not None:
-            x0 = self.preproc_pos0[0]
-            y0 = self.preproc_pos0[1]
-            x1 = self.preproc_pos1[0]
-            y1 = self.preproc_pos1[1]
+        if self.preproc3_pos1 is not None:
+            x0 = self.preproc3_pos0[0]
+            y0 = self.preproc3_pos0[1]
+            x1 = self.preproc3_pos1[0]
+            y1 = self.preproc3_pos1[1]
 
-            if self.preproc_zoom_draw:
+            if self.preproc3_zoom_draw:
                 img_out = draw_rectangle(img_out, x0, x1, y0, y1)
-            if self.preproc_zoom:
+            if self.preproc3_zoom:
                 img_out = img_out[min(y0, y1):max(y0, y1), min(x0, x1):max(x0, x1)]
 
         return img_out
@@ -684,8 +722,6 @@ class ImageViewer:
 
         self.set_frame2()
 
-        self.root.after(100, self.img_preproc)
-
     def reset_img_process(self):
         self.func_proc = None
         self.set_frame2()
@@ -717,14 +753,31 @@ class ImageViewer:
 
         self.set_frames()
 
-    def open_param_window(self):
-        def _print(event):
-            pass
-            # print(app.msg_color.get())
-            # print(app.msg_scale.get())
+    def open_param_window(self, delay=200):
+        def _func1():
+            self.preproc2_thres_flg = app.proc_flg
+            self.preproc2_thres = app.params_dict
+            self.set_frame2()
 
-        app = ParamWindow(self.root)
-        # app.combobox.bind('<<ComboboxSelected>>', _print)
+        def _func2():
+            self.preproc2_thres_flg = False
+            self.preproc2_thres = {}
+            self.set_frame2()
+
+        def _call_entry(event):
+            self.root.after(delay, _func1)
+
+        def _call_destroy(event):
+            if event.widget == event.widget.winfo_toplevel():
+                self.root.after(delay, _func2)
+
+        app = ParamWindowForSingleChannel(self.root)
+        app.entry_lower.bind('<Return>', _call_entry, add='+')
+        app.entry_upper.bind('<Return>', _call_entry, add='+')
+        app.check_inv.bind('<Button-1>', _call_entry, add='+')
+        app.btn_set.bind('<Button-1>', _call_entry, add='+')
+        app.btn_unset.bind('<Button-1>', _call_entry, add='+')
+        app.root.bind('<Destroy>', _call_destroy)
 
     def exit(self):
         self.root.destroy()
