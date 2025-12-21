@@ -72,6 +72,17 @@ class ImageFunc:
         pil = Image.fromarray(img)
         return ImageTk.PhotoImage(pil.convert('RGB'))
 
+    @classmethod
+    def cv2pil(cls, img_cv: np.ndarray):
+        """Convert OpenCV BGR/GRAY numpy image to PIL."""
+        if img_cv is None:
+            return None
+
+        img = img_cv
+        if img.ndim == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(img)
+
     # ----- basic transforms -----
     @classmethod
     def crop(cls, img: Optional[np.ndarray],

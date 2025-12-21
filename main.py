@@ -1,20 +1,17 @@
 import glob
 import os
 import sys
-import time
-from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import cv2
 import tkinter
 from tkinter import ttk, messagebox, simpledialog, filedialog
-from PIL import Image, ImageTk
+
 
 from image_info import ImageData, ImageInfo
-from opencv_func import ImageFunc
-from sub_window import ProfileViewer, GraphViewer, HistogramViewer
 from ini_file import ViewerIniFile
 from image_proc import img_proc
+from canvas import Canvas, CanvasStateSync
 
 
 class ImageViewer:
@@ -38,16 +35,7 @@ class ImageViewer:
         # image params
         self.img_paths: List[str] = []
         self.imgs: List[ImageData] = []
-        self.canvases: List[tkinter.Canvas] = []
         self.img_cnt = 0
-
-        # image overlay
-        self.gui_type = None
-        self.rect_id = 1
-        self.x0 = None
-        self.y0 = None
-        self.x1 = None
-        self.y1 = None
 
         # image processing hook
         self.func_proc = None
@@ -65,7 +53,7 @@ class ImageViewer:
         # misc
         self.cwd = os.getcwd()
         self.img_dir = None
-        self.click_func = 'show_info'
+        # self.click_func = 'show_info'
 
         # frame-related
         self.root.update_idletasks()
@@ -74,8 +62,8 @@ class ImageViewer:
 
         self.frame1 = None
         self.frame2 = None
-        self.img_h = None
-        self.img_w = None
+        self.cvs_h = None
+        self.cvs_w = None
 
         self.entry_file_key = None
         self.entry_file_no = None
@@ -86,13 +74,6 @@ class ImageViewer:
         self.msg_img = tkinter.StringVar()
         self.msg_hsv = tkinter.StringVar()
         self.msg_size = tkinter.StringVar()
-        self.msg_shortcut_func = tkinter.StringVar()
-
-
-        self.shortcut_func_list = ['None', 'Profile(Hor)', 'Profile(Ver)', 'Cross', 'Histogram', 'Histogram(HSV)']
-        self.shortcut_func = self.shortcut_func_list[0]
-
-        self.right_click_menu = None
 
         # build UI
         self.reset_params()
@@ -125,12 +106,11 @@ class ImageViewer:
         self.root.update_idletasks()
         f2_h = self.frame2.winfo_height()
         f2_w = self.frame2.winfo_width()
-        self.img_h = int(f2_h / self.img_num_row * 0.95)
-        self.img_w = int(f2_w / self.img_num_col * 0.95)
+        self.cvs_h = int(f2_h / self.img_num_row * 0.95)
+        self.cvs_w = int(f2_w / self.img_num_col * 0.95)
         self.set_frame2()
 
         self.set_menu()
-        self.set_right_click_menu()
 
     def set_frame1(self, frame_width=20):
 
@@ -141,59 +121,61 @@ class ImageViewer:
 
             _lbl = tkinter.Label(self.frame1, width=frame_width, anchor=tkinter.W, **params, **kwargs)
             _lbl.pack(fill=tkinter.BOTH, anchor=tkinter.W, pady=pady)
-            return _lbl
 
         def _button(text, command, pady=10, **kwargs):
             _btn = tkinter.Button(self.frame1, width=frame_width, text=text, command=command, **kwargs)
             _btn['relief'] = tkinter.RAISED
             _btn.pack(fill=tkinter.BOTH, anchor=tkinter.W, pady=pady)
-            return _btn
 
-        def _sub_frame_entry(entry_name, entry_width,
-                             label1_text,
-                             btn1_text, btn1_command,
-                             label2_text=None, label2_textvar=None,
-                             btn2_text=None, btn2_command=None):
-            _frame =tkinter.Frame(self.frame1)
+        def _horiontal_buttons(buttons, padx=5, button_width=7):
+            _frame = tkinter.Frame(self.frame1)
             _frame.pack(anchor=tkinter.W, pady=1)
 
-            _label = tkinter.Label(_frame, text=label1_text)
-            _label.grid(row=0, column=0, padx=1, pady=1, sticky='w')
+            for text, cmd in buttons:
+                _btn = tkinter.Button(_frame, width=button_width, text=text, command=cmd)
+                _btn.pack(side="left", padx=padx)
+
+        def _entry(entry_name, entry_width,
+                   pre_text=None, pre_textvar=None,
+                   post_text=None, post_textvar=None):
+
+            _frame = tkinter.Frame(self.frame1)
+            _frame.pack(anchor=tkinter.W, pady=1)
+
+            if pre_text is not None:
+                _label = tkinter.Label(_frame, text=pre_text)
+                _label.pack(side="left")
+            elif pre_textvar is not None:
+                _label = tkinter.Label(_frame, textvariable=pre_textvar)
+                _label.pack(side="left")
 
             entry = tkinter.Entry(_frame, width=entry_width, justify='center')
-            entry.grid(row=0, column=1, columnspan=2, padx=1, pady=1, sticky='w')
+            entry.pack(side="left")
 
-            if label2_text is not None:
-                _label = tkinter.Label(_frame, text=label2_text)
-                _label.grid(row=0, column=3, padx=1, pady=1, sticky='w')
-            elif label2_textvar is not None:
-                _label = tkinter.Label(_frame, textvariable=label2_textvar)
-                _label.grid(row=0, column=3, padx=1, pady=1, sticky='w')
-
-            _buttun = tkinter.Button(_frame, text=btn1_text, command=btn1_command)
-            _buttun.grid(row=1, column=0, padx=(0,0), pady=1, sticky='w')
-
-            if btn2_text is not None:
-                _buttun = tkinter.Button(_frame, text=btn2_text, command=btn2_command)
-                _buttun.grid(row=1, column=1, padx=(0,0), pady=1, sticky='w')
+            if post_text is not None:
+                _label = tkinter.Label(_frame, text=post_text)
+                _label.pack(side="left")
+            elif post_textvar is not None:
+                _label = tkinter.Label(_frame, textvariable=post_textvar)
+                _label.pack(side="left")
 
             setattr(self, entry_name, entry)
 
         # info/control
         _label(text='file-------------------------------------------')
 
-        self.msg_file_num.set(' / 564')
-        _sub_frame_entry(entry_name='entry_file_no', entry_width=10,
-                         label1_text='file-no:   ', label2_textvar=self.msg_file_num,
-                         btn1_text='move', btn1_command=None,
-                         btn2_text=None, btn2_command=None)
+        self.msg_file_num.set('')
+        _entry(entry_name='entry_file_no', entry_width=15,
+               pre_text='file-no: ',
+               post_textvar=self.msg_file_num)
+        _horiontal_buttons([("move", self.jump_img)])
 
-        _sub_frame_entry(entry_name='entry_file_key',entry_width=20,
-                         label1_text='filter-key: ', label2_text=None,
-                         btn1_text='filter', btn1_command=None,
-                         btn2_text='reset', btn2_command=None)
+        _entry(entry_name='entry_file_key', entry_width=15,
+               pre_text='file-key: ')
+        _horiontal_buttons([("filter", self.filter_key), ("reset", self.reset_key)])
+        self.entry_file_key.insert(0, self.config.img_key)
 
-        _label(text='image info--------------------------------------', pady=(10,1))
+        _label(text='image info--------------------------------------', pady=(10, 1))
         self.msg_path.set('')
         _label(textvariable=self.msg_path, **self.style_color, **self.style_font)
 
@@ -214,53 +196,39 @@ class ImageViewer:
         _button(text='Unset ImageProcess', command=self.reset_img_process, **self.style_color_red, **self.style_font)
         _button(text='Reset Layout', command=self.reset_params, **self.style_color_red, **self.style_font)
 
-        # select function
-        _label(text='Select shortcut-function')
-        self.msg_shortcut_func.set(self.shortcut_func)
-        combobox = ttk.Combobox(self.frame1, textvariable=self.msg_shortcut_func,
-                                value=self.shortcut_func_list, state='readonly', **self.style_font)
-        combobox.pack(fill=tkinter.X, anchor=tkinter.W, pady=0)
-
-        def _combo(event):
-            GraphViewer.delete()
-            self.shortcut_func = self.msg_shortcut_func.get()
-            self.set_frames()
-
-        combobox.bind('<<ComboboxSelected>>', _combo)
-
     def set_frame2(self):
 
         cnt = 0
         self.imgs = []
-        self.canvases = []
 
-        self.show_img_path(self.img_cnt)
+        self.show_info(self.img_cnt)
+        sync = CanvasStateSync()
 
         for row in range(self.img_num_row):
             for col in range(self.img_num_col):
                 # load img
-                img_org = self.load_img_with_preprocess(self.img_cnt + cnt)
-                self.imgs.append(ImageData(img_org, self.img_h, self.img_w))
+                img_org, img_path = self.load_img_with_preprocess(self.img_cnt + cnt)
 
-                img = self.imgs[cnt].img_pil
+                _data = ImageData(img_org, self.cvs_h, self.cvs_w, img_path=img_path)
+                self.imgs.append(_data)
 
-                cell = tkinter.Frame(self.frame2, width=self.img_w, height=self.img_h)
+                cell = tkinter.Frame(self.frame2, width=self.cvs_w, height=self.cvs_h)
                 cell.grid(row=row, column=col, padx=4, pady=4)
                 cell.grid_propagate(False)
 
-                cvs = tkinter.Canvas(cell, width=self.img_w, height=self.img_h, highlightthickness=0)
+                cvs = Canvas(cell, width=self.cvs_w, height=self.cvs_h, highlightthickness=0)
                 cvs.grid()
 
-                cvs.cell_id = self.img_cnt + cnt
-                cvs.create_image(0, 0, anchor="nw", image=img)
+                cvs.cvs_id = self.img_cnt + cnt
+                cvs.set_image_data(image_data=_data, scale=self.config.zoom)
 
-                self.canvases.append(cvs)
+                sync.register_cvs(cvs)
 
                 cnt += 1
 
                 # set shortcuts if img is not None
-                if img is not None:
-                    self.set_shortcut2cvs(cvs)
+                if img_org is not None:
+                    cvs.set_callback(self.cvs_callback)
 
     def set_menu(self):
         menubar = tkinter.Menu(self.root)
@@ -284,50 +252,11 @@ class ImageViewer:
             row_menu.add_command(label=f'x{i}', command=lambda v=i: _set_images_num(row=v))
         menubar.add_cascade(label='Rows', menu=row_menu)
 
-        # zoom_menu = tkinter.Menu(menubar)
-        # zoom_menu.add_command(label='set zoom', command=self.set_zoom)
-        # zoom_menu.add_command(label='unset zoom', command=self.unset_zoom)
-        # menubar.add_cascade(label='Zoom', menu=zoom_menu)
-
-        def _set_click_function(mode='show_info'):
-            self.click_func = mode
-            self.set_frame2()
-
-        func_menu = tkinter.Menu(menubar)
-        func_menu.add_command(label='show info', command=lambda: _set_click_function('show_info'))
-        func_menu.add_command(label='save image', command=lambda: _set_click_function('save_image'))
-        menubar.add_cascade(label='ClickFunc', menu=func_menu)
-
         self.root.config(menu=menubar)
-
-    def set_right_click_menu(self):
-        self.right_click_menu = tkinter.Menu(self.root, tearoff=0)
-        self.right_click_menu.add_command(label="Zoom In", command=None)
-        self.right_click_menu.add_command(label="Zoom Out", command=None)
-        self.right_click_menu.add_separator()
-        self.right_click_menu.add_command(label="Reset View", command=None)
 
     def set_shortcut(self):
         self.root.bind("<Down>", lambda e: self.next_img())
         self.root.bind("<Up>", lambda e: self.return_img())
-
-    def set_shortcut2cvs(self, cvs):
-        sf = self.shortcut_func.lower()
-        if 'profile' in sf:
-            cvs.bind("<Button>", self.show_profile)
-        elif sf == 'cross':
-            cvs.bind("<Button>", self.mouse_press)
-        elif 'histogram' in sf:
-            cvs.bind("<ButtonPress-1>", self.mouse_press)
-            cvs.bind("<Button1-Motion>", self.mouse_drag)
-            cvs.bind("<ButtonRelease-1>", self.mouse_release)
-        else:
-            cvs.bind("<ButtonPress-1>", self.mouse_press)
-            cvs.bind("<Button1-Motion>", self.mouse_drag)
-            cvs.bind("<ButtonRelease-1>", self.mouse_release)
-
-        cvs.bind("<Button-3>", self.right_click_function)
-        cvs.bind("<Motion>", self.show_info_mouse)
 
     # ---- navigation -----------------------------------
     def start(self):
@@ -351,136 +280,84 @@ class ImageViewer:
             self.img_cnt = 0
         self.set_frame2()
 
-    # ---- event helpers ---------------------------------
-    def _get_image_info(self, event, use_org_img=False):
-        info = ImageInfo(use_org_img)
+    def jump_img(self):
+        img_cnt = self.entry_file_no.get()
 
-        info.cnt = int(event.widget.cell_id)
-        info.full_path = self.img_paths[info.cnt]
-        info.dir = os.path.basename(os.path.dirname(info.full_path))
-        info.file = os.path.basename(info.full_path)
-        info.gui_x = int(event.x)
-        info.gui_y = int(event.y)
+        try:
+            img_cnt = int(img_cnt)
 
-        imgdata = self.imgs[info.cnt - self.img_cnt]
-        info.img = imgdata.img_org if use_org_img else imgdata.img_fit
-        info.fit_ratio = imgdata.fit_ratio
+            if img_cnt < 0 or img_cnt >= len(self.img_paths):
+                messagebox.showinfo('info', 'OUT-RANGE for file-no')
+                self.entry_file_no.delete(0, tkinter.END)
+                self.entry_file_no.insert(0, self.img_cnt)
+            else:
+                self.img_cnt = img_cnt
+                self.set_frame2()
+        except:
+            self.entry_file_no.delete(0, tkinter.END)
+            self.entry_file_no.insert(0, self.img_cnt)
 
-        info.calc_params()
-        return info
+    def filter_key(self):
+        key = self.entry_file_key.get()
+        self.img_paths = glob.glob(f'{self.img_dir}/**/{key}', recursive=True)
 
-    def click_function(self, event):
-        if self.click_func == 'save_image':
-            self.save_image(event)
-        else:
-            self.show_info(event)
+        self.img_cnt = 0
+        self.set_frame2()
 
-    def right_click_function(self, event):
-        self.right_click_menu.tk_popup(event.x_root, event.y_root)
-        self.right_click_menu.grab_release()
+    def reset_key(self):
+        key = self.config.img_key
+        self.img_paths = glob.glob(f'{self.img_dir}/**/{key}', recursive=True)
 
-    def save_image(self, event):
-        info: ImageInfo = self._get_image_info(event, use_org_img=True)
-        img_path = filedialog.asksaveasfilename(initialdir=self.cwd, initialfile=f'{info.file}')
-        if not img_path:
-            return
-        cv2.imwrite(img_path, info.img)
+        self.entry_file_key.delete(0, tkinter.END)
+        self.entry_file_key.insert(0, key)
 
-    def show_info(self, event):
-        info: ImageInfo = self._get_image_info(event)
-        messagebox.showinfo('info',
-                            f'path: {info.full_path}\n'
-                            f'dir: {info.dir}\n'
-                            f'file: {info.file}\n'
-                            f'img_h: {info.img_h_org}\n'
-                            f'img_w: {info.img_w_org}\n')
-
-    def show_info_mouse(self, event):
-        info: ImageInfo = self._get_image_info(event)
-        self.msg_path.set(info.file)
-        self.msg_pos.set(f'X: {info.x_org} Y: {info.y_org}')
-        self.msg_img.set(f'BGR: {info.val}')
-        self.msg_hsv.set(f'HSV: {info.hsv}')
-
-        t = (self.gui_type or '').lower()
-        if t == 'cross':
-            cx, cy = self.x0, self.y0
-            w = int(abs(info.x - cx) / info.fit_ratio * self.config.pix2um)
-            h = int(abs(info.y - cy) / info.fit_ratio * self.config.pix2um)
-            self.msg_size.set(f'W: {w}, H: {h}')
-        else:
-            self.msg_size.set('')
-
-    def show_profile(self, event):
-        info: ImageInfo = self._get_image_info(event, use_org_img=True)
-        direction = 'ver' if self.shortcut_func == 'Profile(Ver)' else 'hor'
-        pos, prof = ImageFunc.check_profile(info.img, x=info.x, y=info.y, direction=direction)
-        ProfileViewer(self.root, pos, prof)
+        self.img_cnt = 0
+        self.set_frame2()
 
     # Mouse Event---------------------------------------------------------------------------------------
-    def overlay_all_delete(self):
-        for cvs in self.canvases:
-            cvs.delete("overlay")
+    def cvs_callback(self, mode, info:ImageInfo):
+        if mode == "move":
+            self.msg_pos.set(f'X: {info.x} Y: {info.y}')
 
-    def overlay_all_add(self, x0, y0, x1=None, y1=None):
-        sf = self.shortcut_func.lower()
-        if sf == 'cross':
-            for cvs in self.canvases:
-                cvs.create_line(0, y0, self.img_w, y0, fill="red", width=2, tags=("overlay",))
-                cvs.create_line(x0, 0, x0, self.img_h, fill="red", width=2, tags=("overlay",))
-        else:
-            for cvs in self.canvases:
-                cvs.create_rectangle(x0, y0, x1, y1, outline="red", width=2, tags=("overlay",))
+            if info.val is not None:
+                self.msg_img.set(f'vals: {info.val}')
 
-    def mouse_press(self, event):
-        cvs = event.widget
-        self.x0 = event.x
-        self.y0 = event.y
+            if info.hsv is not None:
+                self.msg_hsv.set(f'hsv: {info.hsv}')
 
-        self.overlay_all_delete()
-
-        sf = self.shortcut_func.lower()
-        if sf == 'cross':
-            cvs.create_line(0, self.y0, self.img_w, self.y0, fill="red", width=2, tags=("overlay",))
-            cvs.create_line(self.x0, 0, self.x0, self.img_h, fill="red", width=2, tags=("overlay",))
-            self.overlay_all_add(self.x0, self.y0)
-        else:
-            self.rect_id = cvs.create_rectangle(0, 0, 0, 0, outline="red", width=2, tags=("overlay",))
-            cvs.coords(self.rect_id, self.x0, self.y0, self.x0, self.y0)
-
-    def mouse_drag(self, event):
-        cvs = event.widget
-        x = event.x
-        y = event.y
-
-        cvs.coords(self.rect_id, int(self.x0), int(self.y0), x, y)
-
-    def mouse_release(self, event):
-        self.x1 = event.x
-        self.y1 = event.y
-
-        self.overlay_all_add(int(self.x0), int(self.y0), int(self.x1), int(self.y1))
+            if info.rect_h is not None:
+                self.msg_size.set(f'w: {info.rect_w} h: {info.rect_h}')
+            else:
+                self.msg_size.set('')
 
     # Image Pipeline ----------------------------------------------------------------------------------------
     def load_img_with_preprocess(self, img_cnt: int):
         if 0 <= img_cnt < len(self.img_paths):
             path = self.img_paths[img_cnt]
             if not os.path.isfile(path):
-                return None
+                return None, None
             img = cv2.imread(path, cv2.IMREAD_COLOR)
 
             # external processing hook
             if self.func_proc is not None:
                 img = self.func_proc(img)
 
-            return img
-        return None
+            return img, path
+        return None, None
 
-    def show_img_path(self, img_cnt):
+    def show_info(self, img_cnt):
         if 0 <= img_cnt < len(self.img_paths):
             self.msg_path.set(os.path.basename(self.img_paths[img_cnt]))
         else:
             self.msg_path.set('')
+
+        if len(self.img_paths) > 0:
+            self.msg_file_num.set(f' /{len(self.img_paths)}')
+            self.entry_file_no.delete(0, tkinter.END)
+            self.entry_file_no.insert(0, img_cnt)
+        else:
+            self.msg_file_num.set('')
+            self.entry_file_no.delete(0, tkinter.END)
 
     def load_img_list(self, img_dir: Optional[str] = None, ask_input: bool = True):
         if self.topmost:
@@ -507,6 +384,10 @@ class ImageViewer:
 
         self.img_dir = img_dir
         self.img_paths = glob.glob(f'{img_dir}/**/{key}', recursive=True)
+
+        self.entry_file_key.delete(0, tkinter.END)
+        self.entry_file_key.insert(0, key)
+
         self.start()
 
     # Setup params/functions-----------------------------------------------------------------------------------
@@ -539,8 +420,6 @@ class ImageViewer:
         self.root_h = self.root.winfo_height()
         self.root_w = self.root.winfo_width()
 
-        self.shortcut_func = self.shortcut_func_list[0]
-        self.msg_shortcut_func.set(self.shortcut_func)
         self.set_frames()
 
 

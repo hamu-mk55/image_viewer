@@ -141,6 +141,7 @@ class ViewerIniFile(IniFile):
         self.topmost = None
 
         # Static params (defined by config-file only)
+        self.zoom = None
         self.pix2um = None
         self.img_key = None
 
@@ -154,6 +155,9 @@ class ViewerIniFile(IniFile):
         self.append_param(param_name='img_num_row',
                           config_section='GUI', config_key='row_num',
                           default=1, param_type='int')
+        self.append_param(param_name='zoom',
+                          config_section='GUI', config_key='zoom',
+                          default=1.0, param_type='float')
         self.append_param(param_name='pix2um',
                           config_section='GUI', config_key='um/pixel',
                           default=1.0, param_type='float')
@@ -170,7 +174,7 @@ if __name__ == '__main__':
     logger = getLogger(__name__)
 
     app = ViewerIniFile(logger=logger)
-    # app.set_default_params()
-    app.load_inifile()
+    app.set_default_params()
+    # app.load_inifile()
     app.show_params()
-    # app.remake_inifile('config.ini', default_flg=True)
+    app.remake_inifile('config.ini', default_flg=True)
