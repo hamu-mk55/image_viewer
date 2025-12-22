@@ -183,6 +183,7 @@ zoom = 1.0
 um/pixel = 1.0
 topmost = yes
 img_file_key = *.png
+```
 
 ## 13.2 設定項目一覧
 
