@@ -10,7 +10,6 @@ from tkinter import ttk, messagebox, simpledialog, filedialog
 
 from image_info import ImageData, ImageInfo
 from ini_file import ViewerIniFile
-from image_proc import img_proc
 from canvas import Canvas, CanvasStateSync
 
 

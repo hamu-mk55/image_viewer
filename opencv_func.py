@@ -227,44 +227,56 @@ class ImageFunc:
 
     # ----- analysis -----
     @classmethod
-    def check_profile(cls, img: np.ndarray, x: int, y: int, direction: str = 'hor',
-                      width: int = 20, average: bool = True, ch_type: str = 'all'):
+    def check_profile(cls, img: np.ndarray, x0: int, y0: int, x1:int, y1:int,
+                      direction: str = 'hor', ch_type: str = 'all'):
         pos = None
-        profile = None
+        profiles = []
         try:
             if img is None:
                 return None, None
 
             img_h, img_w = img.shape[:2]
-            ch = {'blue': 0, 'green': 1, 'red': 2}.get(ch_type, 0)
+
+            x0 = max(int(x0), 0)
+            x1 = min(int(x1), img_w)
+            y0 = max(int(y0), 0)
+            y1 = min(int(y1), img_h)
+
+            if ch_type == 'all':
+                ch = None
+            else:
+                ch = {'blue': 0, 'green': 1, 'red': 2}.get(ch_type, 0)
 
             if direction == 'hor':
-                y0 = max(int(y - (width - 1) / 2), 0)
-                y1 = min(int(y + (width - 1) / 2), img_h - 1)
-                pos = np.arange(0, img_w)
-                if average:
-                    if ch_type == 'all' or img.ndim < 3:
-                        profile = np.mean(img[y0:y1, :], axis=0)
-                    else:
-                        profile = np.mean(img[y0:y1, :, ch], axis=0)
+                pos = np.arange(x0, x1)
+
+                if img.ndim != 3:
+                    profile = np.mean(img[y0:y1, x0:x1], axis=0)
+                    profiles.append(profile)
+                elif ch_type != 'all':
+                    profile = np.mean(img[y0:y1, x0:x1, ch], axis=0)
+                    profiles.append(profile)
                 else:
-                    profile = img[y0:y1, :] if img.ndim != 3 else img[y0:y1, :, ch]
-                    profile = profile.T
+                    for ch in range(3):
+                        profile = np.mean(img[y0:y1, x0:x1, ch], axis=0)
+                        profiles.append(profile)
             else:
-                x0 = max(int(x - (width - 1) / 2), 0)
-                x1 = min(int(x + (width - 1) / 2), img_w - 1)
-                pos = np.arange(0, img_h)
-                if average:
-                    if ch_type == 'all' or img.ndim < 3:
-                        profile = np.mean(img[:, x0:x1], axis=1)
-                    else:
-                        profile = np.mean(img[:, x0:x1, ch], axis=1)
+                pos = np.arange(y0, y1)
+
+                if img.ndim != 3:
+                    profile = np.mean(img[y0:y1, x0:x1], axis=1)
+                    profiles.append(profile)
+                elif ch_type != 'all':
+                    profile = np.mean(img[y0:y1, x0:x1, ch], axis=1)
+                    profiles.append(profile)
                 else:
-                    profile = img[:, x0:x1] if img.ndim != 3 else img[:, x0:x1, ch]
-                    profile = profile.T
+                    for ch in range(3):
+                        profile = np.mean(img[y0:y1, x0:x1, ch], axis=1)
+                        profiles.append(profile)
+
         except Exception as err:
             print(err)
-        return pos, profile
+        return pos, profiles
 
     @classmethod
     def check_histgram(cls, img: np.ndarray, x0: int, x1: int, y0: int, y1: int):

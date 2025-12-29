@@ -208,9 +208,14 @@ class Canvas(tkinter.Canvas):
             self.right_click_menu.add_command(label="rect", state="disable")
 
         self.right_click_menu.add_separator()
-        self.right_click_menu.add_command(label="profile(hor)", command=lambda: self.show_profile("hor"))
-        self.right_click_menu.add_command(label="profile(ver)", command=lambda: self.show_profile("ver"))
-        self.right_click_menu.add_command(label="histogram(rgb)", command=lambda: self.show_histgram())
+        if self.event_mode == "rect":
+            _state = "active"
+        else:
+            _state = "disable"
+
+        self.right_click_menu.add_command(label="profile(hor)", command=lambda: self.show_profile("hor"), state=_state)
+        self.right_click_menu.add_command(label="profile(ver)", command=lambda: self.show_profile("ver"), state=_state)
+        self.right_click_menu.add_command(label="histogram(rgb)", command=lambda: self.show_histgram(), state=_state)
         # self.right_click_menu.add_command(label="histogram(hsv)", command=None)
 
         self.right_click_menu.add_separator()
@@ -338,13 +343,20 @@ class Canvas(tkinter.Canvas):
 
     # Helper-----------------------------------------------------------------------------------------
     def show_profile(self, direction="hor"):
+        if self.x0 == 0 or self.y0 == 0 or self.x1 == 0 or self.y1 == 0:
+            return
+
         ix0, iy0 = self.canvas_to_img(self.x0, self.y0)
         ix1, iy1 = self.canvas_to_img(self.x1, self.y1)
 
-        pos, prof = ImageFunc.check_profile(self.img_data.img_org, x=ix0, y=iy0, direction=direction)
-        ProfileViewer(self, pos, prof)
+        pos, profs = ImageFunc.check_profile(self.img_data.img_org, x0=ix0, y0=iy0, x1=ix1, y1=iy1,
+                                             direction=direction)
+        ProfileViewer(self, pos, profs)
 
     def show_histgram(self):
+        if self.x0 == 0 or self.y0 == 0 or self.x1 == 0 or self.y1 == 0:
+            return
+
         ix0, iy0 = self.canvas_to_img(self.x0, self.y0)
         ix1, iy1 = self.canvas_to_img(self.x1, self.y1)
 

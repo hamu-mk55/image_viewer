@@ -72,23 +72,42 @@ class GraphViewer:
 
 
 class ProfileViewer(GraphViewer):
-    def __init__(self, parent, pos, profile):
+    def __init__(self, parent, pos, profiles):
         super().__init__(parent)
         if self.singleton:
             GraphViewer.root.title('ProfileViewer')
         else:
             self.root.title('ProfileViewer')
+
         ax = self.fig.add_subplot(1, 1, 1)
-        ax.plot(pos, profile)
+
+        if len(profiles) == 1:
+            labels = ('value',)
+            colors = ('b', )
+        else:
+            labels = ('Blue', 'Green', 'Red')
+            colors = ('b', 'g', 'r')
+
+        for i, prof in enumerate(profiles):
+            ax.plot(pos, prof,
+                    color=colors[i if i < 3 else 0],
+                    label=labels[i if i < len(labels) else 0])
+        ax.legend()
+
         self.start()
 
 
 class HistogramViewer(GraphViewer):
-    def __init__(self, parent, hist_list, labels=('Blue', 'Green', 'Red'), singleton=False):
+    def __init__(self, parent, hist_list, labels=('Blue', 'Green', 'Red'), singleton=True):
         super().__init__(parent, singleton)
-        (GraphViewer.root if self.singleton else self.root).title('HistogramViewer')
+
+        if self.singleton:
+            GraphViewer.root.title('HistogramViewer')
+        else:
+            self.root.title('HistogramViewer')
 
         ax = self.fig.add_subplot(1, 1, 1)
+
         colors = ('b', 'g', 'r')
         linestyles = ('-', ':', '-')
         if len(hist_list) == 1:
