@@ -52,7 +52,9 @@ class ImageViewer:
         # misc
         self.cwd = os.getcwd()
         self.img_dir = None
-        # self.click_func = 'show_info'
+
+        self.root.bind("<Configure>", self.resize_window)
+        self._last_size = (0, 0)
 
         # frame-related
         self.root.update_idletasks()
@@ -94,11 +96,11 @@ class ImageViewer:
 
         # left: info/control
         self.frame1 = tkinter.Frame(self.root, width=300, height=self.root_h, borderwidth=10)
-        self.frame1.pack(side='left', fill=tkinter.X)
+        self.frame1.pack(side='left', fill=tkinter.Y)
 
         # right: images
         self.frame2 = tkinter.Frame(self.root, width=1700, height=self.root_h, bg='#fffffa', borderwidth=10)
-        self.frame2.pack(side='right', fill=tkinter.X)
+        self.frame2.pack(side='right', fill=tkinter.BOTH, expand=True)
 
         self.set_frame1()
 
@@ -420,6 +422,31 @@ class ImageViewer:
         self.root_w = self.root.winfo_width()
 
         self.set_frames()
+
+    def resize_window(self, event):
+        if event.widget is not self.root:
+            return
+        new_size = (event.width, event.height)
+        if new_size == self._last_size:
+            return
+        if self.frame2 is None:
+            return
+
+        self._last_size = new_size
+
+        # re-layout frame2
+        for child in self.frame2.winfo_children():
+            child.destroy()
+
+        self.root_w = event.width
+        self.root_h = event.height
+        self.root.update_idletasks()
+
+        f2_h = self.frame2.winfo_height()
+        f2_w = self.frame2.winfo_width()
+        self.cvs_h = int(f2_h / self.img_num_row * 0.95)
+        self.cvs_w = int(f2_w / self.img_num_col * 0.95)
+        self.set_frame2()
 
 
 if __name__ == '__main__':

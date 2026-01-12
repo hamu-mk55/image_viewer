@@ -12,6 +12,7 @@ from sub_window import ProfileViewer, HistogramViewer
 
 
 class CanvasState:
+    # Canvas間で同期させるパラメータ
     def __init__(self, scale=None, center_x=None, center_y=None, event_mode=None):
         self.scale: float = scale
         self.center_x: float = center_x
@@ -21,6 +22,7 @@ class CanvasState:
 
 
 class CanvasStateSync:
+    # Canvas間でパラメータ同期
     def __init__(self):
         self.canvases: List[Canvas] = []
         self._in_update = False
@@ -64,6 +66,44 @@ class CanvasStateSync:
             cvs.y1 = cy1
 
 
+class ParamWindow(tkinter.Toplevel):
+    def __init__(self, root, zoom, callback=None):
+        super().__init__(root)
+        self.root = root
+
+        self.title("ParamWindow")
+        self.geometry("400x300")
+        self.attributes('-topmost', True)
+
+        self.zoom = zoom
+
+        self.callback = callback
+
+        # UI
+        self.var_zoom = tkinter.IntVar(value=self.zoom)
+
+        tkinter.Label(self, text="zoom").pack(padx=10, pady=(10, 0), anchor="w")
+        tkinter.Spinbox(self, from_=1, to=5, textvariable=self.var_zoom, width=10).pack(padx=10, pady=5, anchor="w")
+
+        tkinter.Button(self, text="Apply", command=self.apply).pack(side="left", padx=6)
+        tkinter.Button(self, text="Close", command=self.exit).pack(side="left", padx=6)
+
+    def apply(self):
+        # callback
+        self.zoom = int(self.var_zoom.get())
+
+        if self.callback:
+            self.callback(self.zoom)
+
+    def exit(self):
+        try:
+            if hasattr(self.root, "param_window"):
+                self.root.param_window = None
+            self.destroy()
+        except Exception:
+            pass
+
+
 class Canvas(tkinter.Canvas):
     def __init__(self, root, **kwargs):
         super().__init__(root, **kwargs)
@@ -100,6 +140,11 @@ class Canvas(tkinter.Canvas):
         self.y0 = 0
         self.x1 = 0
         self.y1 = 0
+
+        # Param window
+        # self.param_window = None
+        # self.btn = None
+        # self.set_buttons()
 
         # EventBind
         self.bind("<Motion>", self.on_mouse_move)
@@ -340,6 +385,51 @@ class Canvas(tkinter.Canvas):
             info.calc_rect_vals(x0=ix0, x1=ix1, y0=iy0, y1=iy1)
 
         self.callback("move", info)
+
+    # buttons----------------------------------------------------------------------------------------
+    def set_buttons(self):
+        self.btn = tkinter.Button(self, text="button", command=self.open_zoom_window)
+
+        self.create_window(5, 5, window=self.btn, anchor="nw")
+
+    def open_zoom_window(self):
+        if self.param_window and self.param_window.winfo_exists():
+            self.param_window.lift()
+            self.param_window.focus_force()
+        else:
+            self.param_window = ParamWindow(self, self.scale, self.callback_zoom_window)
+
+    def callback_zoom_window(self, scale):
+        if self.img_data.img_org is None:
+            return
+
+        if hasattr(self, "canvas_state_sync") and self.canvas_state_sync:
+            self.canvas_state_sync.delete_overlay()
+
+        cx = self.canvasx(self.cvs_w / 2)
+        cy = self.canvasy(self.cvs_h / 2)
+        old_scale = self.scale
+
+        new_scale = scale
+        new_scale = max(self.min_scale, min(self.max_scale, new_scale))
+        zoom = new_scale / old_scale
+        if zoom == 1.0:
+            return
+
+        img_x = (cx - self.offset_x) / old_scale
+        img_y = (cy - self.offset_y) / old_scale
+
+        self.scale = new_scale
+
+        self.offset_x = cx - img_x * self.scale
+        self.offset_y = cy - img_y * self.scale
+
+        self._update_image()
+        self.check_offset()
+        self._update_image()
+
+        if hasattr(self, "canvas_state_sync") and self.canvas_state_sync:
+            self.canvas_state_sync.apply_view_state_to_all_cvs(self)
 
     # Helper-----------------------------------------------------------------------------------------
     def show_profile(self, direction="hor"):
